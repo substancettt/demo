@@ -298,7 +298,7 @@ impl fmt::Display for Node {
         try!(write!(f, "\n"));
         
         try!(write!(f, "    port: {}\n", self.port));
-        try!(write!(f, "    id_hash: {:064X}\n", self.id_hash));
+        try!(write!(f, "    id_hash: {:064X}", self.id_hash));
 
         write!(f, "\n")
     }

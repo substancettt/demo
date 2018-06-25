@@ -43,7 +43,7 @@ fn main() {
     let local_addr = "127.0.0.1:8080";
     let mut peer_addrs = Vec::new();
     peer_addrs.push("127.0.0.1:8081");
-    peer_addrs.push("127.0.0.1:8082");
+//    peer_addrs.push("127.0.0.1:8082");
     
     let mut rt = Runtime::new().unwrap();
     
@@ -332,20 +332,18 @@ fn handle_handshake_req(req_body: Vec<u8>)
 fn handle_handshake_res(node_id_hash: u64) {
     println!("node_id_hash is {:064X}.", node_id_hash);
     
-    let outbound = GLOBAL_OUTBOUND_NODES_MAP.get().lock().unwrap();
-    let node = outbound.get(&node_id_hash).unwrap();;
-    
-    println!("node: {}.", node);
-    
     let mut outbound = GLOBAL_OUTBOUND_NODES_MAP.get().lock().unwrap();
+    
     println!("outbound nodes list size: {}.", outbound.len());
+    let node = outbound.remove(&node_id_hash).unwrap();
+    println!("node: {}", node);
+    println!("outbound nodes list size: {}.", outbound.len());
+    
 
-    outbound.remove(&node_id_hash);
-    println!("outbound nodes list size: {}.", outbound.len());
     
     let mut active_nodes = GLOBAL_ACTIVE_NODES_MAP.get().lock().unwrap();
     println!("active nodes list size: {}.", active_nodes.len());
-    active_nodes.insert(node_id_hash, *node);
+    active_nodes.insert(node_id_hash, node);
     println!("active nodes list size: {}.", active_nodes.len());
 }
 
