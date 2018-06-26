@@ -2,6 +2,7 @@
 
 extern crate bincode;
 extern crate bytes;
+extern crate dotenv;
 extern crate state;
 extern crate time;
 extern crate tokio;
@@ -15,6 +16,8 @@ extern crate lazy_static;
 use bincode::{serialize, deserialize};
 
 use bytes::BufMut;
+
+use dotenv::*;
 
 use state::Storage;
 
@@ -38,12 +41,7 @@ lazy_static! {
 }
 
 fn main() {
-    let node_id = "c33d4c07-6a29-4ca6-8b06-b2781ba7f9b0";
-    let net_id = 666;
-    let local_addr = "127.0.0.1:8080";
-    let mut peer_addrs = Vec::new();
-    peer_addrs.push("127.0.0.1:8081");
-//    peer_addrs.push("127.0.0.1:8082");
+    from_filename("config/env").ok();
     
     let mut rt = Runtime::new().unwrap();
     
@@ -54,7 +52,8 @@ fn main() {
     GLOBAL_ACTIVE_NODES_MAP.set(Mutex::new(active_nodes));
     GLOBAL_OUTBOUND_NODES_MAP.set(Mutex::new(outbound_nodes));
     
-    let listener = TcpListener::bind(&local_addr.to_string().parse().unwrap()).expect("failed to bind");
+    let local_addr = var("local_addr").unwrap().to_string();
+    let listener = TcpListener::bind(&local_addr.parse().unwrap()).expect("failed to bind");
     println!("Listening on: {}", local_addr);
     
     let server = listener.incoming()
@@ -74,20 +73,20 @@ fn main() {
             let port = socket.peer_addr().unwrap().port();
             node.port = port as u32;
             
-            
             // add incoming peer into inbound nodes list
             let mut inbound_nodes = GLOBAL_INBOUND_NODES_MAP.get().lock().unwrap();
             inbound_nodes.insert(calculate_hash(&node), node);
-            println!("inbound nodes list size: {}.", inbound_nodes.len());
-            
+    
             println!("{}", node);
-            println!("hash: code {:064X}", calculate_hash(&node));
+            println!("inbound nodes list size: {}.", inbound_nodes.len());
             
             process(socket);
             Ok(())
         });
     rt.spawn(server);
     
+    let peer_addrs = var("peer_addrs").unwrap().to_string();
+    let peer_addrs: Vec<&str> = peer_addrs.trim().split(",").collect();
     for peer_addr in peer_addrs.iter() {
         let connect = TcpStream::connect(&peer_addr.to_string().parse().unwrap())
             .map(move|socket| {
@@ -114,12 +113,9 @@ fn main() {
                 let mut outbound_nodes = GLOBAL_OUTBOUND_NODES_MAP.get().lock().unwrap();
                 let node_id_hash = calculate_hash(&node);
                 node.id_hash = node_id_hash;
-                
-                println!("{}", node);
-                println!("hash: code {:064X}", node_id_hash);
-                
                 outbound_nodes.insert(node_id_hash, node);
-                
+    
+                println!("{}", node);
                 println!("outbound nodes list size: {}.", outbound_nodes.len());
                 
                 let (mut tx, rx) =
@@ -133,13 +129,14 @@ fn main() {
                 req.head.node_id_hash = node_id_hash;
                 
                 let mut body_req = HandshakeReqBody::new();
+                let node_id = var("node_id").unwrap().to_string();
                 let node_id_secs:Vec<&str> = node_id.split("-").collect();
                 body_req.node_id_sec1.copy_from_slice(node_id_secs[0].to_string().into_bytes().as_slice());
                 body_req.node_id_sec2.copy_from_slice(node_id_secs[1].to_string().into_bytes().as_slice());
                 body_req.node_id_sec3.copy_from_slice(node_id_secs[2].to_string().into_bytes().as_slice());
                 body_req.node_id_sec4.copy_from_slice(node_id_secs[3].to_string().into_bytes().as_slice());
                 body_req.node_id_sec5.copy_from_slice(node_id_secs[4].to_string().into_bytes().as_slice());
-                body_req.net_id = net_id;
+                body_req.net_id = var("net_id").unwrap().parse::<u32>().unwrap();
                 let mut pos = 0;
                 for sec in local_ip.iter() {
                     body_req.ip[pos] = sec.parse::<u8>().unwrap();
