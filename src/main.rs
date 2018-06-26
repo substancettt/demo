@@ -22,7 +22,7 @@ use dotenv::*;
 use state::Storage;
 
 use std::collections::HashMap;
-use std::io;
+use std::{env, io};
 use std::sync::Mutex;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -41,7 +41,17 @@ lazy_static! {
 }
 
 fn main() {
-    from_filename("config/env").ok();
+    let mut args = env::args();
+
+    let mut config_file = "config/env".to_string();
+    if args.len() == 2 {
+        config_file= args.nth(1).unwrap();
+        println!("1config_file: {}", config_file);
+    }
+    
+    println!("2config_file: {}", config_file);
+    
+    from_filename(config_file).ok();
     
     let mut rt = Runtime::new().unwrap();
     
@@ -157,7 +167,9 @@ fn main() {
                 
                 tx.start_send(req).unwrap();
                 
-                let task = tx.send_all(rx.and_then(respond).filter(|item| item.head.action != Action::UNKNOWN))
+                let task = tx.send_all(rx.and_then(move| item| {
+                    respond(item, node_id_hash)
+                }).filter(|item| item.head.action != Action::UNKNOWN))
                     .then(|res| {
                         if let Err(e) = res {
                             println!("failed to process connection; error = {:?}", e);
@@ -181,7 +193,9 @@ fn process(socket: TcpStream) {
         P2p.framed(socket)
             .split();
     
-    let task = tx.send_all(rx.and_then(respond).filter(|item| item.head.action != Action::UNKNOWN))
+    let task = tx.send_all(rx.and_then(|item| {
+        respond(item, 0)
+    }).filter(|item| item.head.action != Action::UNKNOWN))
         .then(|res| {
             if let Err(e) = res {
                 println!("failed to process connection; error = {:?}", e);
@@ -193,8 +207,7 @@ fn process(socket: TcpStream) {
     tokio::spawn(task);
 }
 
-
-fn respond(req: ChannelBuffer)
+fn respond(req: ChannelBuffer, node_id_hash: u64)
            -> Box<Future<Item=ChannelBuffer, Error=io::Error> + Send>
 {
     let mut res = ChannelBuffer::new();
@@ -226,7 +239,7 @@ fn respond(req: ChannelBuffer)
                         }
                         Action::HANDSHAKERES => {
                             println!("HANDSHAKERES action received.");
-                            handle_handshake_res(req.head.node_id_hash);
+                            handle_handshake_res(node_id_hash);
                         }
                         Action::PING => {
                             println!("PING action received.");

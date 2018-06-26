@@ -1,0 +1,6 @@
+# Configurations
+
+node_id=c33d4c07-6a29-4ca6-8b06-b2781ba7f9b1
+net_id=668
+local_addr=127.0.0.1:8081
+peer_addrs=127.0.0.1:8080,127.0.0.1:8082
