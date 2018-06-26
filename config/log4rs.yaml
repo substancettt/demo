@@ -2,6 +2,8 @@ refresh_rate: 30 seconds
 appenders:
   stdout:
     kind: console
+    encoder:
+      pattern: "{d(%Y-%m-%d %H:%M:%S%.6f)} [{t}:{T}:{f}:{L}:{l}]: {m}{n}"
   p2p_poc:
     kind: file
     path: "log/p2p_poc.log"
@@ -10,10 +12,10 @@ appenders:
 root:
   level: warn
   appenders:
-    - p2p_poc
+    - stdout
 loggers:
   p2p_poc:
     level: debug
     appenders:
-      - p2p_poc
+      - stdout
     additive: false

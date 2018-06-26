@@ -128,8 +128,8 @@ impl fmt::Display for ChannelBuffer {
     }
 }
 
-#[derive(Serialize, Deserialize, PartialEq)]
-pub struct HandshakeReqBody {
+#[derive(Clone, Copy, Deserialize, Hash, PartialEq, Serialize)]
+pub struct NodeInfoSection {
     pub node_id_sec1: [u8; 8],
     node_id_dem1: u8,
     pub node_id_sec2: [u8; 4],
@@ -139,15 +139,11 @@ pub struct HandshakeReqBody {
     pub node_id_sec4: [u8; 4],
     node_id_dem4: u8,
     pub node_id_sec5: [u8; 12],
-    pub net_id: u32,
-    pub ip: [u8; 8],
-    pub port: u32,
-    pub revision_version: Vec<u8>,
 }
 
-impl HandshakeReqBody {
-    pub fn new() -> HandshakeReqBody {
-        HandshakeReqBody {
+impl NodeInfoSection {
+    pub fn new() -> NodeInfoSection {
+        NodeInfoSection {
             node_id_sec1: [0; 8],
             node_id_dem1: b'-',
             node_id_sec2: [0; 4],
@@ -157,17 +153,13 @@ impl HandshakeReqBody {
             node_id_sec4: [0; 4],
             node_id_dem4: b'-',
             node_id_sec5: [0; 12],
-            net_id: 0,
-            ip: [0; 8],
-            port: 0,
-            revision_version: Vec::new(),
         }
     }
 }
 
-impl fmt::Display for HandshakeReqBody {
+impl fmt::Display for NodeInfoSection {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        try!(write!(f, "HandshakeReqBody: \n    Node id: "));
+        try!(write!(f, "NodeInfoSection: \n    Node id: "));
         for sec in self.node_id_sec1.iter() {
             try!(write!(f, "{}", *sec as char));
         }
@@ -187,18 +179,61 @@ impl fmt::Display for HandshakeReqBody {
         for sec in self.node_id_sec5.iter() {
             try!(write!(f, "{}", *sec as char));
         }
-        try!(write!(f, "\n"));
+        write!(f, "")
+    }
+}
 
-        try!(write!(f, "    net_id: {}\n", self.net_id));
+#[derive(Clone, Copy, Deserialize, Hash, PartialEq, Serialize)]
+pub struct IpInfoSection {
+    pub ip: [u8; 8],
+    pub port: u32,
+}
 
+impl IpInfoSection {
+    pub fn new() -> IpInfoSection {
+        IpInfoSection {
+            ip: [0; 8],
+            port: 0,
+        }
+    }
+}
+
+impl fmt::Display for IpInfoSection {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        try!(write!(f, "IpInfoSection: \n"));
         try!(write!(f, "    ip: "));
         for sec in self.ip.iter() {
             try!(write!(f, "{:02X}", sec));
         }
-        try!(write!(f, "\n"));
+        write!(f, "\n    port: {}", self.port)
+    }
+}
 
-        try!(write!(f, "    port: {}\n", self.port));
+#[derive(Serialize, Deserialize, PartialEq)]
+pub struct HandshakeReqBody {
+    pub node_info: NodeInfoSection,
+    pub net_id: u32,
+    pub ip_info: IpInfoSection,
+    pub revision_version: Vec<u8>,
+}
 
+impl HandshakeReqBody {
+    pub fn new() -> HandshakeReqBody {
+        HandshakeReqBody {
+            node_info: NodeInfoSection::new(),
+            net_id: 0,
+            ip_info: IpInfoSection::new(),
+            revision_version: Vec::new(),
+        }
+    }
+}
+
+impl fmt::Display for HandshakeReqBody {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        try!(write!(f, "HandshakeReqBody: \n"));
+        try!(write!(f, "    {}\n", self.node_info));
+        try!(write!(f, "    net_id: {}\n", self.net_id));
+        try!(write!(f, "    {}\n", self.ip_info));
         try!(write!(f, "    revision & version: "));
         for sec in self.revision_version.iter() {
             try!(write!(f, "{:02X}", sec));
@@ -229,12 +264,35 @@ impl fmt::Display for HandshakeResBody {
         try!(write!(f, "HandshakeResBody: \n    Status: "));
         try!(write!(f, "{}\n", self.status));
         try!(write!(f, "    Length: {}\n", self.len));
-        
         try!(write!(f, "    binary_version: "));
         for sec in self.binary_version.iter() {
             try!(write!(f, "{:02X}", sec));
         }
         write!(f, "\n")
+    }
+}
+
+
+#[derive(Serialize, Deserialize, PartialEq)]
+pub struct ActiveNodesSection {
+    pub node_info: NodeInfoSection,
+    pub ip_info: IpInfoSection,
+}
+
+impl ActiveNodesSection {
+    pub fn new() -> ActiveNodesSection {
+        ActiveNodesSection {
+            node_info: NodeInfoSection::new(),
+            ip_info: IpInfoSection::new(),
+        }
+    }
+}
+
+impl fmt::Display for ActiveNodesSection {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        try!(write!(f, "ActiveNodesSection: \n"));
+        try!(write!(f, "    {}\n", self.node_info));
+        write!(f, "    {}\n", self.ip_info)
     }
 }
 
@@ -245,8 +303,7 @@ pub struct Node {
     pub id_sec3: [u8; 4],
     pub id_sec4: [u8; 4],
     pub id_sec5: [u8; 12],
-    pub ip: [u8; 8],
-    pub port: u32,
+    pub ip_info: IpInfoSection,
     pub id_hash: u64,
 }
 
@@ -258,8 +315,7 @@ impl Node {
             id_sec3: [b'*'; 4],
             id_sec4: [b'*'; 4],
             id_sec5: [b'*'; 12],
-            ip: [0; 8],
-            port: 0,
+            ip_info: IpInfoSection::new(),
             id_hash: 0,
         }
     }
@@ -288,17 +344,8 @@ impl fmt::Display for Node {
             try!(write!(f, "{}", *sec as char));
         }
         try!(write!(f, "\n"));
-        
-        try!(write!(f, "    ip: "));
-        for sec in self.ip.iter() {
-            try!(write!(f, "{:02X}", sec));
-        }
-        try!(write!(f, "\n"));
-        
-        try!(write!(f, "    port: {}\n", self.port));
-        try!(write!(f, "    id_hash: {:064X}", self.id_hash));
-
-        write!(f, "\n")
+        try!(write!(f, "    {}\n", self.ip_info));
+        write!(f, "    id_hash: {:064X}", self.id_hash)
     }
 }
 
