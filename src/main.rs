@@ -12,6 +12,9 @@ extern crate p2p_poc;
 
 #[macro_use]
 extern crate lazy_static;
+#[macro_use]
+extern crate log;
+extern crate log4rs;
 
 use bincode::{serialize, deserialize};
 
@@ -41,15 +44,17 @@ lazy_static! {
 }
 
 fn main() {
+    log4rs::init_file("config/log4rs.yaml", Default::default()).unwrap();
+    info!("Booting up");
+    
     let mut args = env::args();
 
     let mut config_file = "config/env".to_string();
     if args.len() == 2 {
         config_file= args.nth(1).unwrap();
-        println!("1config_file: {}", config_file);
     }
     
-    println!("2config_file: {}", config_file);
+    info!("Configuration file {} loaded.", config_file);
     
     from_filename(config_file).ok();
     
@@ -64,13 +69,13 @@ fn main() {
     
     let local_addr = var("local_addr").unwrap().to_string();
     let listener = TcpListener::bind(&local_addr.parse().unwrap()).expect("failed to bind");
-    println!("Listening on: {}", local_addr);
+    info!("Listening on: {}", local_addr);
     
     let server = listener.incoming()
-        .map_err(|e| println!("failed to accept socket; error = {:?}", e))
+        .map_err(|e| error!("Failed to accept socket; error = {:?}", e))
         .for_each(move|socket| {
             let peer_addr = socket.peer_addr().unwrap();
-            println!("New Connection: {}", peer_addr);
+            info!("New Connection: {}", peer_addr);
             
             let mut node = Node::new();
             let ip = socket.peer_addr().unwrap().ip().to_string();
@@ -87,8 +92,8 @@ fn main() {
             let mut inbound_nodes = GLOBAL_INBOUND_NODES_MAP.get().lock().unwrap();
             inbound_nodes.insert(calculate_hash(&node), node);
     
-            println!("{}", node);
-            println!("inbound nodes list size: {}.", inbound_nodes.len());
+            debug!("{}", node);
+            debug!("inbound nodes list size: {}.", inbound_nodes.len());
             
             process(socket);
             Ok(())
@@ -100,7 +105,7 @@ fn main() {
     for peer_addr in peer_addrs.iter() {
         let connect = TcpStream::connect(&peer_addr.to_string().parse().unwrap())
             .map(move|socket| {
-                println!("Connected");
+                info!("Connected");
                 
                 let mut node = Node::new();
                 
@@ -125,8 +130,8 @@ fn main() {
                 node.id_hash = node_id_hash;
                 outbound_nodes.insert(node_id_hash, node);
     
-                println!("{}", node);
-                println!("outbound nodes list size: {}.", outbound_nodes.len());
+                debug!("{}", node);
+                debug!("outbound nodes list size: {}.", outbound_nodes.len());
                 
                 let (mut tx, rx) =
                     P2p.framed(socket)
@@ -136,7 +141,6 @@ fn main() {
                 req.head.ver = Version::V0;
                 req.head.ctrl = Control::NET;
                 req.head.action = Action::HANDSHAKEREQ;
-                req.head.node_id_hash = node_id_hash;
                 
                 let mut body_req = HandshakeReqBody::new();
                 let node_id = var("node_id").unwrap().to_string();
@@ -161,9 +165,8 @@ fn main() {
                 let encoded: Vec<u8> = serialize(&body_req).unwrap();
                 req.body.put_slice(encoded.as_slice());
                 req.head.len = req.body.len() as u32;
-    
-                println!("node_id_hash: {:064X}", req.head.node_id_hash);
-                println!("body_req: {}", body_req);
+                
+                debug!("body_req: {}", body_req);
                 
                 tx.start_send(req).unwrap();
                 
@@ -172,7 +175,7 @@ fn main() {
                 }).filter(|item| item.head.action != Action::UNKNOWN))
                     .then(|res| {
                         if let Err(e) = res {
-                            println!("failed to process connection; error = {:?}", e);
+                            error!("Failed to process connection; error = {:?}", e);
                         }
                         
                         Ok(())
@@ -180,7 +183,7 @@ fn main() {
                 
                 tokio::spawn(task);
             })
-            .map_err(|e| println!("Failed to connect: {}", e));
+            .map_err(|e| error!("Failed to connect: {}", e));
         rt.spawn(connect);
     }
     
@@ -198,7 +201,7 @@ fn process(socket: TcpStream) {
     }).filter(|item| item.head.action != Action::UNKNOWN))
         .then(|res| {
             if let Err(e) = res {
-                println!("failed to process connection; error = {:?}", e);
+                error!("failed to process connection; error = {:?}", e);
             }
             
             Ok(())
@@ -214,69 +217,68 @@ fn respond(req: ChannelBuffer, node_id_hash: u64)
     
     match req.head.ver {
         Version::V0 => {
-            println!("Ver 0 package received.");
+            trace!("Ver 0 package received.");
             
             res.head.ver = Version::V0;
             res.head.ctrl = Control::UNKNOWN;
             
             match req.head.ctrl {
                 Control::NET => {
-                    println!("P2P message received.");
+                    trace!("P2P message received.");
                     
                     res.head.ctrl = Control::NET;
                     res.head.action = Action::UNKNOWN;
                     
                     match req.head.action {
                         Action::DISCONNECT => {
-                            println!("DISCONNECT action received.");
+                            trace!("DISCONNECT action received.");
                         }
                         Action::HANDSHAKEREQ => {
-                            println!("HANDSHAKEREQ action received.");
+                            trace!("HANDSHAKEREQ action received.");
                             
                             res.head.action = Action::HANDSHAKERES;
                             res.body.put_slice(handle_handshake_req(req.body).as_slice());
-                            res.head.node_id_hash = req.head.node_id_hash;
                         }
                         Action::HANDSHAKERES => {
-                            println!("HANDSHAKERES action received.");
+                            trace!("HANDSHAKERES action received.");
                             handle_handshake_res(node_id_hash);
                         }
                         Action::PING => {
-                            println!("PING action received.");
+                            trace!("PING action received.");
                             
                             res.head.action = Action::PONG;
                             res.body.put_slice("Aion pong".to_string().as_bytes().to_vec().as_slice());
                         }
                         Action::PONG => {
-                            println!("PONG action received.");
+                            trace!("PONG action received.");
                         }
                         Action::ACTIVENODESREQ => {
-                            println!("ACTIVENODESREQ action received.");
+                            trace!("ACTIVENODESREQ action received.");
                             
                             res.head.action = Action::ACTIVENODESRES;
                             res.body.put_slice("Aion ACTIVENODESRES id: 0001".to_string().as_bytes().to_vec().as_slice());
                         }
                         Action::ACTIVENODESRES => {
-                            println!("ACTIVENODESRES action received.");
+                            trace!("ACTIVENODESRES action received.");
                         }
                         _ => {
-                            println!("Invalid action received.");
+                            error!("Invalid action received.");
                         }
                     }
                 }
                 Control::SYNC => {
-                    println!("Kernel message received.");
+                    trace!("Kernel message received.");
                 }
                 _ => {
-                    println!("Invalid message received.");
+                    error!("Invalid message received.");
                 }
             }
         }
         Version::V1 => {
-            println!("Ver 1 package received.");
+            error!("Ver 1 package received.");
         }
         _ => {
-            println!("Invalid Version.");
+            trace!("Invalid Version.");
         }
     };
     
@@ -293,7 +295,7 @@ fn handle_handshake_req(req_body: Vec<u8>)
     
     let encoded: Vec<u8> = req_body.to_vec();
     let decoded: HandshakeReqBody = deserialize(&encoded[..]).unwrap();
-    println!("{}", decoded);
+    debug!("{}", decoded);
     
     let revision_version = decoded.revision_version;
     let (revision_len, rest) = revision_version.split_at(1);
@@ -318,9 +320,9 @@ fn handle_handshake_req(req_body: Vec<u8>)
     node.port = decoded.port;
     
     let mut inbound_nodes = GLOBAL_INBOUND_NODES_MAP.get().lock().unwrap();
-    println!("inbound nodes list size: {}.", inbound_nodes.len());
+    debug!("inbound nodes list size: {}.", inbound_nodes.len());
     inbound_nodes.remove(&calculate_hash(&node));
-    println!("inbound nodes list size: {}.", inbound_nodes.len());
+    debug!("inbound nodes list size: {}.", inbound_nodes.len());
     
     node.id_sec1.copy_from_slice(decoded.node_id_sec1.to_vec().as_slice());
     node.id_sec2.copy_from_slice(decoded.node_id_sec2.to_vec().as_slice());
@@ -328,33 +330,31 @@ fn handle_handshake_req(req_body: Vec<u8>)
     node.id_sec4.copy_from_slice(decoded.node_id_sec4.to_vec().as_slice());
     node.id_sec5.copy_from_slice(decoded.node_id_sec5.to_vec().as_slice());
     node.id_hash = calculate_hash(&node);
-    println!("{}", node);
-    println!("hash: code {:064X}", node.id_hash);
+    debug!("{}", node);
+    debug!("hash: code {:064X}", node.id_hash);
     
     let mut active_nodes = GLOBAL_ACTIVE_NODES_MAP.get().lock().unwrap();
-    println!("active nodes list size: {}.", active_nodes.len());
+    debug!("active nodes list size: {}.", active_nodes.len());
     active_nodes.insert(node.id_hash, node);
-    println!("active nodes list size: {}.", active_nodes.len());
+    debug!("active nodes list size: {}.", active_nodes.len());
     
     res_body
 }
 
 fn handle_handshake_res(node_id_hash: u64) {
-    println!("node_id_hash is {:064X}.", node_id_hash);
+    debug!("node_id_hash is {:064X}.", node_id_hash);
     
     let mut outbound = GLOBAL_OUTBOUND_NODES_MAP.get().lock().unwrap();
     
-    println!("outbound nodes list size: {}.", outbound.len());
+    debug!("outbound nodes list size: {}.", outbound.len());
     let node = outbound.remove(&node_id_hash).unwrap();
-    println!("node: {}", node);
-    println!("outbound nodes list size: {}.", outbound.len());
-    
-
+    debug!("node: {}", node);
+    debug!("outbound nodes list size: {}.", outbound.len());
     
     let mut active_nodes = GLOBAL_ACTIVE_NODES_MAP.get().lock().unwrap();
-    println!("active nodes list size: {}.", active_nodes.len());
+    debug!("active nodes list size: {}.", active_nodes.len());
     active_nodes.insert(node_id_hash, node);
-    println!("active nodes list size: {}.", active_nodes.len());
+    debug!("active nodes list size: {}.", active_nodes.len());
 }
 
 fn calculate_hash<T: Hash>(t: &T) -> u64 {

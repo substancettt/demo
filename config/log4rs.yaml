@@ -1,0 +1,19 @@
+refresh_rate: 30 seconds
+appenders:
+  stdout:
+    kind: console
+  p2p_poc:
+    kind: file
+    path: "log/p2p_poc.log"
+    encoder:
+      pattern: "{d(%Y-%m-%d %H:%M:%S%.6f)} [{t}:{T}:{f}:{L}:{l}]: {m}{n}"
+root:
+  level: warn
+  appenders:
+    - p2p_poc
+loggers:
+  p2p_poc:
+    level: debug
+    appenders:
+      - p2p_poc
+    additive: false

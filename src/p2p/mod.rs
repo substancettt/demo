@@ -74,7 +74,6 @@ pub struct Head {
     pub ver: Version,
     pub ctrl: Control,
     pub action: Action,
-    pub node_id_hash: u64,
     pub len: u32,
 }
 
@@ -84,7 +83,6 @@ impl Head {
             ver: Version::UNKNOWN,
             ctrl: Control::UNKNOWN,
             action: Action::UNKNOWN,
-            node_id_hash: 0,
             len: 0,
         }
     }
@@ -92,7 +90,7 @@ impl Head {
 
 impl fmt::Display for Head {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "(Version: {}, Control {}, Action {}, NodeIdHash {:064X}, Lenght {})", self.ver, self.ctrl, self.action, self.node_id_hash, self.len)
+        write!(f, "(Version: {}, Control {}, Action {}, Length {})", self.ver, self.ctrl, self.action, self.len)
     }
 }
 
