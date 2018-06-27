@@ -1,7 +1,7 @@
 use tokio_codec::{Decoder, Encoder};
 use std::{fmt, io};
 use bytes::{BufMut, BytesMut};
-use bincode::{serialize, deserialize};
+use bincode::config;
 
 pub struct P2p;
 
@@ -85,6 +85,10 @@ impl Head {
             action: Action::UNKNOWN,
             len: 0,
         }
+    }
+    
+    pub fn len() -> usize {
+        8 as usize
     }
 }
 
@@ -196,16 +200,15 @@ impl IpInfoSection {
             port: 0,
         }
     }
+    
+    pub fn get_addr(&self) -> String {
+        format!("{}.{}.{}.{}:{}", self.ip[0], self.ip[1], self.ip[2], self.ip[3], self.port).to_string()
+    }
 }
 
 impl fmt::Display for IpInfoSection {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        try!(write!(f, "IpInfoSection: \n"));
-        try!(write!(f, "    ip: "));
-        for sec in self.ip.iter() {
-            try!(write!(f, "{:02X}", sec));
-        }
-        write!(f, "\n    port: {}", self.port)
+        write!(f, "IpInfoSection: {}\n", self.get_addr())
     }
 }
 
@@ -369,11 +372,13 @@ impl PeerInfo {
 impl Encoder for P2p {
     type Item = ChannelBuffer;
     type Error = io::Error;
-
+    
     fn encode(&mut self, item: ChannelBuffer, dst: &mut BytesMut) -> io::Result<()> {
-        let encoded: Vec<u8> = serialize(&item).unwrap();
+        let mut encoder = config();
+        let encoder = encoder.big_endian();
+        let encoded: Vec<u8> = encoder.serialize(&item).unwrap();
         dst.put_slice(encoded.as_slice());
-
+        
         return Ok(());
     }
 }
@@ -381,15 +386,19 @@ impl Encoder for P2p {
 impl Decoder for P2p {
     type Item = ChannelBuffer;
     type Error = io::Error;
-
+    
     fn decode(&mut self, src: &mut BytesMut) -> io::Result<Option<ChannelBuffer>> {
         let len = src.len();
         if src.len() > 0 {
+            debug!("Frame length: {}", len);
+            let mut decoder = config();
+            let decoder = decoder.big_endian();
             let encoded: Vec<u8> = src.split_to(len).to_vec();
-            let decoded: ChannelBuffer = deserialize(&encoded[..]).unwrap();
-
+            let decoded: ChannelBuffer = decoder.deserialize(&encoded[..]).unwrap();
+            
             Ok(Some(decoded))
         } else {
+            debug!("Empty frame ...");
             Ok(None)
         }
     }
