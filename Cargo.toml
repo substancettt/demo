@@ -4,7 +4,8 @@ version = "0.1.0"
 authors = ["Well Shang <wellshang@163.com>"]
 
 [dependencies]
-bincode = "1.0.0"
+bincode = "1.0.1"
+byteorder = "1.2.3"
 bytes = "0.4"
 dotenv = "0.13.0"
 futures = "0.1.20"

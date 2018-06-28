@@ -260,35 +260,6 @@ impl fmt::Display for HandshakeReqBody {
     }
 }
 
-pub struct HandshakeResBody {
-    pub status: u8,
-    pub len: u8,
-    pub binary_version: Vec<u8>,
-}
-
-impl HandshakeResBody {
-    pub fn new() -> HandshakeResBody {
-        HandshakeResBody {
-            status: 0,
-            len: 0,
-            binary_version: Vec::new(),
-        }
-    }
-}
-
-impl fmt::Display for HandshakeResBody {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        try!(write!(f, "HandshakeResBody: \n    Status: "));
-        try!(write!(f, "{}\n", self.status));
-        try!(write!(f, "    Length: {}\n", self.len));
-        try!(write!(f, "    binary_version: "));
-        for sec in self.binary_version.iter() {
-            try!(write!(f, "{:02X}", sec));
-        }
-        write!(f, "\n")
-    }
-}
-
 pub struct ActiveNodesSection {
     pub node_id: [u8; 36],
     pub ip_addr: IpAddr,
@@ -297,7 +268,7 @@ pub struct ActiveNodesSection {
 impl ActiveNodesSection {
     pub fn new() -> ActiveNodesSection {
         ActiveNodesSection {
-            node_id: [b'*'; 36],
+            node_id: [b'0'; 36],
             ip_addr: IpAddr::new(),
         }
     }
@@ -375,23 +346,24 @@ impl Decoder for P2p {
     fn decode(&mut self, src: &mut BytesMut) -> io::Result<Option<ChannelBuffer>> {
         let len = src.len();
         if src.len() > 0 {
-    
+
 //            let mut i = 0;
 //            for c in src.iter() {
 //                debug!("src[{}]: {:02X}", i, c);
 //                i = i + 1;
 //            }
-            
-            
+
+
             debug!("Frame length: {}", len);
             let mut decoder = config();
             let decoder = decoder.big_endian();
-            
+
             let mut decoded = ChannelBuffer::new();
-            let (head, body) = src.split_at(HEADER_LENGTH);
+            let (head, rest) = src.split_at(HEADER_LENGTH);
+            let (body, _) = src.split_at(len - HEADER_LENGTH);
             decoded.head = decoder.deserialize(head).unwrap();
             decoded.body.put_slice(body.to_vec().as_slice());
-            
+
             debug!("ChannelBuffer: {}", decoded);
             
             Ok(Some(decoded))
