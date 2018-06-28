@@ -5,11 +5,33 @@ use bincode::config;
 
 pub struct P2p;
 
+pub static HEADER_LENGTH: usize = 8;
+pub static NODE_ID_LENGTH: usize = 36;
+pub static IP_LENGTH: usize = 8;
+
 #[derive(Serialize, Deserialize, PartialEq)]
 pub enum Version {
     V0 = 0,
     V1 = 1,
     UNKNOWN = 0xFFFF,
+}
+
+impl Version {
+    pub fn value(&self) -> u16 {
+        match *self {
+            Version::V0 => 0 as u16,
+            Version::V1 => 1 as u16,
+            Version::UNKNOWN => 0xFFFF as u16,
+        }
+    }
+    
+    pub fn get(value: u16) -> Version {
+        match value {
+            0 => Version::V0,
+            1 => Version::V1,
+            _ => Version::UNKNOWN,
+        }
+    }
 }
 
 impl fmt::Display for Version {
@@ -28,6 +50,24 @@ pub enum Control {
     NET = 0,
     SYNC = 1,
     UNKNOWN = 0xFF,
+}
+
+impl Control {
+    pub fn value(&self) -> u8 {
+        match *self {
+            Control::NET => 0 as u8,
+            Control::SYNC => 1 as u8,
+            Control::UNKNOWN => 0xFF as u8,
+        }
+    }
+    
+    pub fn get(value: u8) -> Control {
+        match value {
+            0 => Control::NET,
+            1 => Control::SYNC,
+            _ => Control::UNKNOWN,
+        }
+    }
 }
 
 impl fmt::Display for Control {
@@ -53,6 +93,34 @@ pub enum Action {
     UNKNOWN = 0xFF,
 }
 
+impl Action {
+    pub fn value(&self) -> u8 {
+        match *self {
+            Action::DISCONNECT => 0 as u8,
+            Action::HANDSHAKEREQ => 1 as u8,
+            Action::HANDSHAKERES => 2 as u8,
+            Action::PING => 3 as u8,
+            Action::PONG => 4 as u8,
+            Action::ACTIVENODESREQ => 5 as u8,
+            Action::ACTIVENODESRES => 6 as u8,
+            Action::UNKNOWN => 0xFF as u8,
+        }
+    }
+    
+    pub fn get(value: u8) -> Action {
+        match value {
+            0 => Action::DISCONNECT,
+            1 => Action::HANDSHAKEREQ,
+            2 => Action::HANDSHAKERES,
+            3 => Action::PING,
+            4 => Action::PONG,
+            5 => Action::ACTIVENODESREQ,
+            6 => Action::ACTIVENODESRES,
+            _ => Action::UNKNOWN,
+        }
+    }
+}
+
 impl fmt::Display for Action {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let printable = match *self {
@@ -71,18 +139,18 @@ impl fmt::Display for Action {
 
 #[derive(Serialize, Deserialize, PartialEq)]
 pub struct Head {
-    pub ver: Version,
-    pub ctrl: Control,
-    pub action: Action,
+    pub ver: u16,
+    pub ctrl: u8,
+    pub action: u8,
     pub len: u32,
 }
 
 impl Head {
     pub fn new() -> Head {
         Head {
-            ver: Version::UNKNOWN,
-            ctrl: Control::UNKNOWN,
-            action: Action::UNKNOWN,
+            ver: Version::UNKNOWN.value(),
+            ctrl: Control::UNKNOWN.value(),
+            action: Action::UNKNOWN.value(),
             len: 0,
         }
     }
@@ -120,7 +188,7 @@ impl fmt::Display for Array {
         let Array(ref vec) = *self;
         for (count, v) in vec.iter().enumerate() {
             if count != 0 { try!(write!(f, " ")); }
-            try!(write!(f, "{}", v));
+            try!(write!(f, "{:02X}", v));
         }
         write!(f, "\n")
     }
@@ -133,69 +201,14 @@ impl fmt::Display for ChannelBuffer {
 }
 
 #[derive(Clone, Copy, Deserialize, Hash, PartialEq, Serialize)]
-pub struct NodeInfoSection {
-    pub node_id_sec1: [u8; 8],
-    node_id_dem1: u8,
-    pub node_id_sec2: [u8; 4],
-    node_id_dem2: u8,
-    pub node_id_sec3: [u8; 4],
-    node_id_dem3: u8,
-    pub node_id_sec4: [u8; 4],
-    node_id_dem4: u8,
-    pub node_id_sec5: [u8; 12],
-}
-
-impl NodeInfoSection {
-    pub fn new() -> NodeInfoSection {
-        NodeInfoSection {
-            node_id_sec1: [0; 8],
-            node_id_dem1: b'-',
-            node_id_sec2: [0; 4],
-            node_id_dem2: b'-',
-            node_id_sec3: [0; 4],
-            node_id_dem3: b'-',
-            node_id_sec4: [0; 4],
-            node_id_dem4: b'-',
-            node_id_sec5: [0; 12],
-        }
-    }
-}
-
-impl fmt::Display for NodeInfoSection {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        try!(write!(f, "NodeInfoSection: \n    Node id: "));
-        for sec in self.node_id_sec1.iter() {
-            try!(write!(f, "{}", *sec as char));
-        }
-        try!(write!(f, "-"));
-        for sec in self.node_id_sec2.iter() {
-            try!(write!(f, "{}", *sec as char));
-        }
-        try!(write!(f, "-"));
-        for sec in self.node_id_sec3.iter() {
-            try!(write!(f, "{}", *sec as char));
-        }
-        try!(write!(f, "-"));
-        for sec in self.node_id_sec4.iter() {
-            try!(write!(f, "{}", *sec as char));
-        }
-        try!(write!(f, "-"));
-        for sec in self.node_id_sec5.iter() {
-            try!(write!(f, "{}", *sec as char));
-        }
-        write!(f, "")
-    }
-}
-
-#[derive(Clone, Copy, Deserialize, Hash, PartialEq, Serialize)]
-pub struct IpInfoSection {
+pub struct IpAddr {
     pub ip: [u8; 8],
     pub port: u32,
 }
 
-impl IpInfoSection {
-    pub fn new() -> IpInfoSection {
-        IpInfoSection {
+impl IpAddr {
+    pub fn new() -> IpAddr {
+        IpAddr {
             ip: [0; 8],
             port: 0,
         }
@@ -206,26 +219,25 @@ impl IpInfoSection {
     }
 }
 
-impl fmt::Display for IpInfoSection {
+impl fmt::Display for IpAddr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "IpInfoSection: {}\n", self.get_addr())
+        write!(f, "Ip Address: {}\n", self.get_addr())
     }
 }
 
-#[derive(Serialize, Deserialize, PartialEq)]
 pub struct HandshakeReqBody {
-    pub node_info: NodeInfoSection,
+    pub node_id: [u8; 36],
     pub net_id: u32,
-    pub ip_info: IpInfoSection,
+    pub ip_addr: IpAddr,
     pub revision_version: Vec<u8>,
 }
 
 impl HandshakeReqBody {
     pub fn new() -> HandshakeReqBody {
         HandshakeReqBody {
-            node_info: NodeInfoSection::new(),
+            node_id: [b'*'; 36],
             net_id: 0,
-            ip_info: IpInfoSection::new(),
+            ip_addr: IpAddr::new(),
             revision_version: Vec::new(),
         }
     }
@@ -233,10 +245,13 @@ impl HandshakeReqBody {
 
 impl fmt::Display for HandshakeReqBody {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        try!(write!(f, "HandshakeReqBody: \n"));
-        try!(write!(f, "    {}\n", self.node_info));
+        try!(write!(f, "HandshakeReqBody: \n    Node Id: "));
+        for c in self.node_id.iter() {
+            try!(write!(f, "{}", *c as char));
+        }
+        try!(write!(f, "\n"));
         try!(write!(f, "    net_id: {}\n", self.net_id));
-        try!(write!(f, "    {}\n", self.ip_info));
+        try!(write!(f, "    {}\n", self.ip_addr));
         try!(write!(f, "    revision & version: "));
         for sec in self.revision_version.iter() {
             try!(write!(f, "{:02X}", sec));
@@ -245,7 +260,6 @@ impl fmt::Display for HandshakeReqBody {
     }
 }
 
-#[derive(Serialize, Deserialize, PartialEq)]
 pub struct HandshakeResBody {
     pub status: u8,
     pub len: u8,
@@ -275,50 +289,44 @@ impl fmt::Display for HandshakeResBody {
     }
 }
 
-
-#[derive(Serialize, Deserialize, PartialEq)]
 pub struct ActiveNodesSection {
-    pub node_info: NodeInfoSection,
-    pub ip_info: IpInfoSection,
+    pub node_id: [u8; 36],
+    pub ip_addr: IpAddr,
 }
 
 impl ActiveNodesSection {
     pub fn new() -> ActiveNodesSection {
         ActiveNodesSection {
-            node_info: NodeInfoSection::new(),
-            ip_info: IpInfoSection::new(),
+            node_id: [b'*'; 36],
+            ip_addr: IpAddr::new(),
         }
     }
 }
 
 impl fmt::Display for ActiveNodesSection {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        try!(write!(f, "ActiveNodesSection: \n"));
-        try!(write!(f, "    {}\n", self.node_info));
-        write!(f, "    {}\n", self.ip_info)
+        try!(write!(f, "ActiveNodesSection: \n    Node Id: "));
+        for c in self.node_id.iter() {
+            try!(write!(f, "{}", *c as char));
+        }
+        write!(f, "    {}\n", self.ip_addr)
     }
 }
 
-#[derive(Clone, Copy, Deserialize, Hash, PartialEq, Serialize)]
+#[derive(Clone, Copy, Hash, PartialEq)]
 pub struct Node {
-    pub id_sec1: [u8; 8],
-    pub id_sec2: [u8; 4],
-    pub id_sec3: [u8; 4],
-    pub id_sec4: [u8; 4],
-    pub id_sec5: [u8; 12],
-    pub ip_info: IpInfoSection,
+    pub id_sec1: [u8; 24],
+    pub id_sec2: [u8; 12],
+    pub ip_addr: IpAddr,
     pub id_hash: u64,
 }
 
 impl Node {
     pub fn new() -> Node {
         Node {
-            id_sec1: [b'*'; 8],
-            id_sec2: [b'*'; 4],
-            id_sec3: [b'*'; 4],
-            id_sec4: [b'*'; 4],
-            id_sec5: [b'*'; 12],
-            ip_info: IpInfoSection::new(),
+            id_sec1: [b'0'; 24],
+            id_sec2: [b'0'; 12],
+            ip_addr: IpAddr::new(),
             id_hash: 0,
         }
     }
@@ -327,45 +335,15 @@ impl Node {
 impl fmt::Display for Node {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         try!(write!(f, "Node information: \n    Node id: "));
-        for sec in self.id_sec1.iter() {
-            try!(write!(f, "{}", *sec as char));
+        for c in self.id_sec1.iter() {
+            try!(write!(f, "{}", *c as char));
         }
-        try!(write!(f, "-"));
-        for sec in self.id_sec2.iter() {
-            try!(write!(f, "{}", *sec as char));
-        }
-        try!(write!(f, "-"));
-        for sec in self.id_sec3.iter() {
-            try!(write!(f, "{}", *sec as char));
-        }
-        try!(write!(f, "-"));
-        for sec in self.id_sec4.iter() {
-            try!(write!(f, "{}", *sec as char));
-        }
-        try!(write!(f, "-"));
-        for sec in self.id_sec5.iter() {
-            try!(write!(f, "{}", *sec as char));
+        for c in self.id_sec2.iter() {
+            try!(write!(f, "{}", *c as char));
         }
         try!(write!(f, "\n"));
-        try!(write!(f, "    {}\n", self.ip_info));
+        try!(write!(f, "    {}\n", self.ip_addr));
         write!(f, "    id_hash: {:064X}", self.id_hash)
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct PeerInfo {
-    pub ip: &'static  str,
-    pub port: u32,
-    pub node_id: &'static  str,
-}
-
-impl PeerInfo {
-    pub fn new(_ip: &'static str, _port: u32, _node_id: &'static str) -> PeerInfo {
-        PeerInfo {
-            ip: _ip.into(),
-            port: _port,
-            node_id: _node_id.into(),
-        }
     }
 }
 
@@ -376,8 +354,15 @@ impl Encoder for P2p {
     fn encode(&mut self, item: ChannelBuffer, dst: &mut BytesMut) -> io::Result<()> {
         let mut encoder = config();
         let encoder = encoder.big_endian();
-        let encoded: Vec<u8> = encoder.serialize(&item).unwrap();
+        let encoded: Vec<u8> = encoder.serialize(&item.head).unwrap();
         dst.put_slice(encoded.as_slice());
+        dst.put_slice(item.body.as_slice());
+    
+        let mut i = 0;
+        for c in item.body.iter() {
+            debug!("encoded body[{}]: {:02X}", i, c);
+            i = i + 1;
+        }
         
         return Ok(());
     }
@@ -390,11 +375,24 @@ impl Decoder for P2p {
     fn decode(&mut self, src: &mut BytesMut) -> io::Result<Option<ChannelBuffer>> {
         let len = src.len();
         if src.len() > 0 {
+    
+//            let mut i = 0;
+//            for c in src.iter() {
+//                debug!("src[{}]: {:02X}", i, c);
+//                i = i + 1;
+//            }
+            
+            
             debug!("Frame length: {}", len);
             let mut decoder = config();
             let decoder = decoder.big_endian();
-            let encoded: Vec<u8> = src.split_to(len).to_vec();
-            let decoded: ChannelBuffer = decoder.deserialize(&encoded[..]).unwrap();
+            
+            let mut decoded = ChannelBuffer::new();
+            let (head, body) = src.split_at(HEADER_LENGTH);
+            decoded.head = decoder.deserialize(head).unwrap();
+            decoded.body.put_slice(body.to_vec().as_slice());
+            
+            debug!("ChannelBuffer: {}", decoded);
             
             Ok(Some(decoded))
         } else {

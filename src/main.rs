@@ -16,7 +16,7 @@ extern crate lazy_static;
 extern crate log;
 extern crate log4rs;
 
-use bincode::{config, deserialize};
+use bincode::{config};
 
 use bytes::BufMut;
 
@@ -25,7 +25,7 @@ use dotenv::*;
 use state::Storage;
 
 use std::collections::HashMap;
-use std::{env, io};
+use std::{env, io, mem};
 use std::sync::Mutex;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -98,24 +98,21 @@ fn main() {
         let peer_node_ip: Vec<&str> = peer_node_ip.split(".").collect();
         let mut pos = 0;
         for sec in peer_node_ip.iter() {
-            node.ip_info.ip[pos] = sec.parse::<u8>().unwrap();
+            node.ip_addr.ip[pos] = sec.parse::<u8>().unwrap();
             pos = pos + 1;
         }
-        node.ip_info.port = peer_node_port.parse::<u32>().unwrap();
+        node.ip_addr.port = peer_node_port.parse::<u32>().unwrap();
         
         node.id_hash = calculate_hash(&node);
-        let node_id_secs:Vec<&str> = peer_node_id.split("-").collect();
-        node.id_sec1.copy_from_slice(node_id_secs[0].to_string().into_bytes().as_slice());
-        node.id_sec2.copy_from_slice(node_id_secs[1].to_string().into_bytes().as_slice());
-        node.id_sec3.copy_from_slice(node_id_secs[2].to_string().into_bytes().as_slice());
-        node.id_sec4.copy_from_slice(node_id_secs[3].to_string().into_bytes().as_slice());
-        node.id_sec5.copy_from_slice(node_id_secs[4].to_string().into_bytes().as_slice());
+        let (id_sec1, id_sec2) = peer_node_id.split_at(24);
+        node.id_sec1.copy_from_slice(id_sec1.as_bytes().to_vec().as_slice());
+        node.id_sec2.copy_from_slice(id_sec2.as_bytes().to_vec().as_slice());
         
         temp_nodes.insert(node.id_hash, node);
     }
     
     for (_, temp_node) in temp_nodes.iter() {
-        let peer_addr = temp_node.ip_info.get_addr();
+        let peer_addr = temp_node.ip_addr.get_addr();
         let peer_node = temp_node.clone();
         let connect = TcpStream::connect(&peer_addr.parse().unwrap())
             .map(move|socket| {
@@ -139,53 +136,42 @@ fn main() {
                         .split();
                 
                 let mut req = ChannelBuffer::new();
-                req.head.ver = Version::V0;
-                req.head.ctrl = Control::NET;
-                req.head.action = Action::HANDSHAKEREQ;
-                
-                let mut body_req = HandshakeReqBody::new();
-                let node_id = var("node_id").unwrap().to_string();
-                let node_id_secs:Vec<&str> = node_id.split("-").collect();
-                body_req.node_info.node_id_sec1.copy_from_slice(node_id_secs[0].to_string().into_bytes().as_slice());
-                body_req.node_info.node_id_sec2.copy_from_slice(node_id_secs[1].to_string().into_bytes().as_slice());
-                body_req.node_info.node_id_sec3.copy_from_slice(node_id_secs[2].to_string().into_bytes().as_slice());
-                body_req.node_info.node_id_sec4.copy_from_slice(node_id_secs[3].to_string().into_bytes().as_slice());
-                body_req.node_info.node_id_sec5.copy_from_slice(node_id_secs[4].to_string().into_bytes().as_slice());
-                body_req.net_id = var("net_id").unwrap().parse::<u32>().unwrap();
-                let mut pos = 0;
-                for sec in local_ip.iter() {
-                    body_req.ip_info.ip[pos] = sec.parse::<u8>().unwrap();
-                    pos = pos + 1;
-                }
-                body_req.ip_info.port = local_port as u32;
-                body_req.revision_version.push(4);
-                body_req.revision_version.put_slice("Aion".to_string().into_bytes().as_slice());
-                body_req.revision_version.push(1);
-                body_req.revision_version.put_slice("01".to_string().into_bytes().as_slice());
-                
+                req.head.ver = Version::V0.value();
+                req.head.ctrl = Control::NET.value();
+                req.head.action = Action::HANDSHAKEREQ.value();
+
                 let mut encoder = config();
                 let encoder = encoder.big_endian();
-                let encoded: Vec<u8> = encoder.serialize(&body_req).unwrap();
-                
-                req.body.put_slice(encoded.as_slice());
-                
-                
-                let body = req.body.clone();
+    
+                let node_id = var("node_id").unwrap().to_string();
+                req.body.put_slice(node_id.into_bytes().as_slice());
+    
+                let net_id = var("net_id").unwrap().parse::<u32>().unwrap();
+                let net_id: Vec<u8> = encoder.serialize(&net_id).unwrap();
+                req.body.put_slice(net_id.as_slice());
+    
+                let mut ip = [0; 8];
                 let mut i = 0;
-                for c in body {
-                    debug!("body[{}]: {:02X}", i, c);
+                for sec in local_ip.iter() {
+                    ip[i] = sec.parse::<u8>().unwrap();
                     i = i + 1;
                 }
+                req.body.put_slice(ip.to_vec().as_slice());
+                let port = local_port as u32;
+                let port: Vec<u8> = encoder.serialize(&port).unwrap();
+                req.body.put_slice(port.as_slice());
+                req.body.push(4);
+                req.body.put_slice("Aion".to_string().into_bytes().as_slice());
+                req.body.push(1);
+                req.body.put_slice("01".to_string().into_bytes().as_slice());
                 
-                req.head.len = req.body.len() as u32 + 8;
-                
-                debug!("body_req: {}", body_req);
+                req.head.len = req.body.len() as u32;
                 
                 tx.start_send(req).unwrap();
                 
                 let task = tx.send_all(rx.and_then(move| item| {
                     respond(item, peer_node_hash)
-                }).filter(|item| item.head.action != Action::UNKNOWN))
+                }).filter(|item| Action::get(item.head.action) != Action::UNKNOWN))
                     .then(|res| {
                         if let Err(e) = res {
                             error!("Failed to process connection; error = {:?}", e);
@@ -213,11 +199,11 @@ fn process(socket: TcpStream) {
     let ip: Vec<&str> = ip.split(".").collect();
     let mut pos = 0;
     for sec in ip.iter() {
-        node.ip_info.ip[pos] = sec.parse::<u8>().unwrap();
+        node.ip_addr.ip[pos] = sec.parse::<u8>().unwrap();
         pos = pos + 1;
     }
     let port = socket.peer_addr().unwrap().port();
-    node.ip_info.port = port as u32;
+    node.ip_addr.port = port as u32;
     let node_id_hash = calculate_hash(&node);
     node.id_hash = node_id_hash;
     
@@ -234,7 +220,7 @@ fn process(socket: TcpStream) {
     
     let task = tx.send_all(rx.and_then(move| item| {
         respond(item, node_id_hash)
-    }).filter(|item| item.head.action != Action::UNKNOWN))
+    }).filter(|item| Action::get(item.head.action) != Action::UNKNOWN))
         .then(|res| {
             if let Err(e) = res {
                 error!("failed to process connection; error = {:?}", e);
@@ -251,28 +237,28 @@ fn respond(req: ChannelBuffer, node_id_hash: u64)
 {
     let mut res = ChannelBuffer::new();
     
-    match req.head.ver {
+    match Version::get(req.head.ver) {
         Version::V0 => {
             trace!("Ver 0 package received.");
             
-            res.head.ver = Version::V0;
-            res.head.ctrl = Control::UNKNOWN;
+            res.head.ver = Version::V0.value();
+            res.head.ctrl = Control::UNKNOWN.value();
             
-            match req.head.ctrl {
+            match Control::get(req.head.ctrl) {
                 Control::NET => {
                     trace!("P2P message received.");
                     
-                    res.head.ctrl = Control::NET;
-                    res.head.action = Action::UNKNOWN;
+                    res.head.ctrl = Control::NET.value();
+                    res.head.action = Action::UNKNOWN.value();
                     
-                    match req.head.action {
+                    match Action::get(req.head.action) {
                         Action::DISCONNECT => {
                             trace!("DISCONNECT action received.");
                         }
                         Action::HANDSHAKEREQ => {
                             trace!("HANDSHAKEREQ action received.");
                             
-                            res.head.action = Action::HANDSHAKERES;
+                            res.head.action = Action::HANDSHAKERES.value();
                             res.body.put_slice(handle_handshake_req(req.body, node_id_hash).as_slice());
                         }
                         Action::HANDSHAKERES => {
@@ -280,12 +266,12 @@ fn respond(req: ChannelBuffer, node_id_hash: u64)
                             handle_handshake_res(node_id_hash);
                             
                             // for testing
-                            res.head.action = Action::ACTIVENODESREQ;
+                            res.head.action = Action::ACTIVENODESREQ.value();
                         }
                         Action::PING => {
                             trace!("PING action received.");
                             
-                            res.head.action = Action::PONG;
+                            res.head.action = Action::PONG.value();
                             res.body.put_slice("Aion pong".to_string().as_bytes().to_vec().as_slice());
                         }
                         Action::PONG => {
@@ -294,7 +280,7 @@ fn respond(req: ChannelBuffer, node_id_hash: u64)
                         Action::ACTIVENODESREQ => {
                             trace!("ACTIVENODESREQ action received.");
                             
-                            res.head.action = Action::ACTIVENODESRES;
+                            res.head.action = Action::ACTIVENODESRES.value();
                             res.body.put_slice(handle_active_nodes_req(node_id_hash).as_slice());
                         }
                         Action::ACTIVENODESRES => {
@@ -329,14 +315,28 @@ fn respond(req: ChannelBuffer, node_id_hash: u64)
 }
 
 
-fn handle_handshake_req(req_body: Vec<u8>, node_id_hash: u64)
+fn handle_handshake_req(body: Vec<u8>, node_id_hash: u64)
                         -> Vec<u8>
 {
     let mut res_body = Vec::new();
+    let mut req_body: HandshakeReqBody = HandshakeReqBody::new();
     
-    let encoded: Vec<u8> = req_body.to_vec();
-    let decoded: HandshakeReqBody = deserialize(&encoded[..]).unwrap();
-    let revision_version = decoded.revision_version;
+    let mut decoder = config();
+    let decoder = decoder.big_endian();
+    
+    let (node_id, req_body_rest) = body.split_at(NODE_ID_LENGTH);
+    req_body.node_id.copy_from_slice(node_id.to_vec().as_slice());
+    let (net_id, req_body_rest) = req_body_rest.split_at(mem::size_of::<i32>());
+    req_body.net_id = decoder.deserialize(net_id).unwrap();
+    let (ip, req_body_rest) = req_body_rest.split_at(IP_LENGTH);
+    req_body.ip_addr.ip.copy_from_slice(ip.to_vec().as_slice());
+    let (port, revision_version) = req_body_rest.split_at(mem::size_of::<i32>());
+    req_body.ip_addr.port = decoder.deserialize(port).unwrap();
+    req_body.revision_version.put_slice(revision_version.to_vec().as_slice());
+
+    debug!("HandshakeReqBody: {}", req_body);
+    
+    let revision_version = req_body.revision_version;
     let (revision_len, rest) = revision_version.split_at(1);
     let revision_len = revision_len[0] as usize;
     let (revision, rest) = rest.split_at(revision_len);
@@ -344,31 +344,21 @@ fn handle_handshake_req(req_body: Vec<u8>, node_id_hash: u64)
     let version_len = version_len[0] as usize;
     let (_version, _rest) = rest.split_at(version_len);
     
-    
-    let mut body = HandshakeResBody::new();
-    body.status = 0;
-    body.binary_version.put_slice(revision.to_vec().as_slice());
-    body.len = body.binary_version.len() as u8;
-    
-    let mut encoder = config();
-    let encoder = encoder.big_endian();
-    let encoded: Vec<u8> = encoder.serialize(&body).unwrap();
-    res_body.put_slice(encoded.as_slice());
+    res_body.push(0 as u8);
+    res_body.push(revision.len() as u8);
+    res_body.put_slice(revision.to_vec().as_slice());
     
     // move inbound node to active
     let mut node = Node::new();
-    node.ip_info.ip.copy_from_slice(decoded.ip_info.ip.to_vec().as_slice());
-    node.ip_info.port = decoded.ip_info.port;
+    node.ip_addr.ip.copy_from_slice(req_body.ip_addr.ip.to_vec().as_slice());
+    node.ip_addr.port = req_body.ip_addr.port;
     node.id_hash = node_id_hash;
     let mut inbound_nodes = GLOBAL_INBOUND_NODES_MAP.get().lock().unwrap();
     inbound_nodes.remove(&node_id_hash);
     debug!("inbound nodes list size: {}.", inbound_nodes.len());
     
-    node.id_sec1.copy_from_slice(decoded.node_info.node_id_sec1.to_vec().as_slice());
-    node.id_sec2.copy_from_slice(decoded.node_info.node_id_sec2.to_vec().as_slice());
-    node.id_sec3.copy_from_slice(decoded.node_info.node_id_sec3.to_vec().as_slice());
-    node.id_sec4.copy_from_slice(decoded.node_info.node_id_sec4.to_vec().as_slice());
-    node.id_sec5.copy_from_slice(decoded.node_info.node_id_sec5.to_vec().as_slice());
+    req_body.node_id.to_vec().as_slice();
+
     
     debug!("{}", node);
     
@@ -383,6 +373,8 @@ fn handle_handshake_res(node_id_hash: u64) {
     let mut outbound = GLOBAL_OUTBOUND_NODES_MAP.get().lock().unwrap();
     
     let node = outbound.remove(&node_id_hash).unwrap();
+    
+    
     debug!("node: {}", node);
     
     let mut active_nodes = GLOBAL_ACTIVE_NODES_MAP.get().lock().unwrap();
@@ -390,72 +382,69 @@ fn handle_handshake_res(node_id_hash: u64) {
     debug!("active nodes list size: {}.", active_nodes.len());
 }
 
-fn handle_active_nodes_req(node_id_hash: u64)
+fn handle_active_nodes_req(_node_id_hash: u64)
                            -> Vec<u8>
 {
-    let mut res_body = Vec::new();
+    let res_body = Vec::new();
     
-    let active_nodes = GLOBAL_ACTIVE_NODES_MAP.get().lock().unwrap();
-    
-    let node: Node = *active_nodes.get(&node_id_hash).unwrap();
-    debug!("{}", node);
-    
-    res_body.push(active_nodes.len() as u8);
-    for (_, node) in active_nodes.iter() {
-        let mut active_nodes_sec = ActiveNodesSection::new();
-        active_nodes_sec.node_info.node_id_sec1.copy_from_slice(node.id_sec1.to_vec().as_slice());
-        active_nodes_sec.node_info.node_id_sec2.copy_from_slice(node.id_sec2.to_vec().as_slice());
-        active_nodes_sec.node_info.node_id_sec3.copy_from_slice(node.id_sec3.to_vec().as_slice());
-        active_nodes_sec.node_info.node_id_sec4.copy_from_slice(node.id_sec4.to_vec().as_slice());
-        active_nodes_sec.node_info.node_id_sec5.copy_from_slice(node.id_sec5.to_vec().as_slice());
-        
-        active_nodes_sec.ip_info.ip.copy_from_slice(node.ip_info.ip.to_vec().as_slice());
-        active_nodes_sec.ip_info.port = node.ip_info.port;
-        
-        let mut encoder = config();
-        let encoder = encoder.big_endian();
-        let encoded: Vec<u8> = encoder.serialize(&active_nodes_sec).unwrap();
-        res_body.put_slice(encoded.as_slice());
-        debug!("{}", active_nodes_sec);
-    }
+//    let active_nodes = GLOBAL_ACTIVE_NODES_MAP.get().lock().unwrap();
+//
+//    let node: Node = *active_nodes.get(&node_id_hash).unwrap();
+//    debug!("{}", node);
+//
+//    res_body.push(active_nodes.len() as u8);
+//    for (_, node) in active_nodes.iter() {
+//        let mut active_nodes_sec = ActiveNodesSection::new();
+//        active_nodes_sec.node_id.node_id_sec1.copy_from_slice(node.id_sec1.to_vec().as_slice());
+//        active_nodes_sec.node_id.node_id_sec2.copy_from_slice(node.id_sec2.to_vec().as_slice());
+//
+//        active_nodes_sec.ip_addr.ip.copy_from_slice(node.ip_addr.ip.to_vec().as_slice());
+//        active_nodes_sec.ip_addr.port = node.ip_addr.port;
+//
+//        let mut encoder = config();
+//        let encoder = encoder.big_endian();
+//        let encoded: Vec<u8> = encoder.serialize(&active_nodes_sec).unwrap();
+//        res_body.put_slice(encoded.as_slice());
+//        debug!("{}", active_nodes_sec);
+//    }
     
     res_body
 }
 
-fn handle_active_nodes_res(req_body: Vec<u8>) {
-    let (node_count, rest) = req_body.split_at(1);
+fn handle_active_nodes_res(_req_body: Vec<u8>) {
+//    let (node_count, rest) = req_body.split_at(1);
+//
+//    debug!("node_count: {}", node_count[0]);
+//
+//    let mut node_list = Vec::new();
+//    let mut i = 0;
+//    let mut rest = rest;
+//    while i < node_count[0] as u32 {
+//        let (node_sec, next) = rest.split_at(48);
+//        let encoded: Vec<u8> = node_sec.to_vec();
+//        let decoded: ActiveNodesSection = deserialize(&encoded[..]).unwrap();
+//
+//        let mut node = Node::new();
+//        node.ip_addr.ip.copy_from_slice(decoded.ip_addr.ip.to_vec().as_slice());
+//        node.ip_addr.port = decoded.ip_addr.port;
+//        node.id_hash = calculate_hash(&node);
+//        node.id_sec1.copy_from_slice(decoded.node_id.node_id_sec1.to_vec().as_slice());
+//        node.id_sec2.copy_from_slice(decoded.node_id.node_id_sec2.to_vec().as_slice());
+//        node.id_sec3.copy_from_slice(decoded.node_id.node_id_sec3.to_vec().as_slice());
+//        node.id_sec4.copy_from_slice(decoded.node_id.node_id_sec4.to_vec().as_slice());
+//        node.id_sec5.copy_from_slice(decoded.node_id.node_id_sec5.to_vec().as_slice());
+//
+//        node_list.push(node);
+//        rest = next;
+//
+//        i = i + 1;
+//    }
     
-    debug!("node_count: {}", node_count[0]);
-    
-    let mut node_list = Vec::new();
-    let mut i = 0;
-    let mut rest = rest;
-    while i < node_count[0] as u32 {
-        let (node_sec, next) = rest.split_at(48);
-        let encoded: Vec<u8> = node_sec.to_vec();
-        let decoded: ActiveNodesSection = deserialize(&encoded[..]).unwrap();
-        
-        let mut node = Node::new();
-        node.ip_info.ip.copy_from_slice(decoded.ip_info.ip.to_vec().as_slice());
-        node.ip_info.port = decoded.ip_info.port;
-        node.id_hash = calculate_hash(&node);
-        node.id_sec1.copy_from_slice(decoded.node_info.node_id_sec1.to_vec().as_slice());
-        node.id_sec2.copy_from_slice(decoded.node_info.node_id_sec2.to_vec().as_slice());
-        node.id_sec3.copy_from_slice(decoded.node_info.node_id_sec3.to_vec().as_slice());
-        node.id_sec4.copy_from_slice(decoded.node_info.node_id_sec4.to_vec().as_slice());
-        node.id_sec5.copy_from_slice(decoded.node_info.node_id_sec5.to_vec().as_slice());
-        
-        node_list.push(node);
-        rest = next;
-        
-        i = i + 1;
-    }
-    
-    let mut temp_nodes = GLOBAL_TEMP_NODES_MAP.get().lock().unwrap();
-    for node in node_list.iter() {
-        temp_nodes.insert(node.id_hash, *node);
-        debug!("Temp {}", node);
-    }
+    let temp_nodes = GLOBAL_TEMP_NODES_MAP.get().lock().unwrap();
+//    for node in node_list.iter() {
+//        temp_nodes.insert(node.id_hash, *node);
+//        debug!("Temp {}", node);
+//    }
     debug!("temp nodes list size: {}.", temp_nodes.len());
 }
 
