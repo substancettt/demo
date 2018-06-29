@@ -1,9 +1,143 @@
-use tokio_codec::{Decoder, Encoder};
-use std::{fmt, io};
-use bytes::{BufMut, BytesMut};
 use bincode::config;
+use bytes::{BufMut, BytesMut};
+use state::Storage;
+use std::{fmt, io};
+use std::collections::HashMap;
+use std::sync::Mutex;
+use tokio_codec::{Decoder, Encoder};
+
+lazy_static! {
+    static ref GLOBAL_INBOUND_NODES_MAP: Storage<Mutex<HashMap<u64, Node>>> = Storage::new();
+    static ref GLOBAL_OUTBOUND_NODES_MAP: Storage<Mutex<HashMap<u64, Node>>> = Storage::new();
+    static ref GLOBAL_ACTIVE_NODES_MAP: Storage<Mutex<HashMap<u64, Node>>> = Storage::new();
+    static ref GLOBAL_TEMP_NODES_MAP: Storage<Mutex<HashMap<u64, Node>>> = Storage::new();
+}
 
 pub struct P2p;
+
+impl P2p {
+    pub fn init_inbound_node(inbound_nodes: HashMap<u64, Node>) {
+        GLOBAL_INBOUND_NODES_MAP.set(Mutex::new(inbound_nodes));
+    }
+    
+    pub fn init_outbound_node(outbound_nodes: HashMap<u64, Node>) {
+        GLOBAL_OUTBOUND_NODES_MAP.set(Mutex::new(outbound_nodes));
+    }
+    
+    pub fn init_active_node(active_nodes: HashMap<u64, Node>) {
+        GLOBAL_ACTIVE_NODES_MAP.set(Mutex::new(active_nodes));
+    }
+    
+    pub fn init_temp_node(temp_nodes: HashMap<u64, Node>) {
+        GLOBAL_TEMP_NODES_MAP.set(Mutex::new(temp_nodes));
+    }
+    
+    pub fn get_inbound_nodes(mut inbound_nodes: Vec<Node>) {
+        for val in GLOBAL_INBOUND_NODES_MAP.get().lock().unwrap().values() {
+            inbound_nodes.push(*val);
+        }
+    }
+    
+    pub fn get_outbound_nodes(mut outbound_nodes: Vec<Node>) {
+        for val in GLOBAL_OUTBOUND_NODES_MAP.get().lock().unwrap().values() {
+            outbound_nodes.push(*val);
+        }
+    }
+    
+    pub fn get_active_nodes(mut active_nodes: Vec<Node>) {
+        for val in GLOBAL_ACTIVE_NODES_MAP.get().lock().unwrap().values() {
+            active_nodes.push(*val);
+        }
+    }
+    
+    pub fn get_temp_nodes(mut temp_nodes: Vec<Node>) {
+        for val in GLOBAL_TEMP_NODES_MAP.get().lock().unwrap().values() {
+            temp_nodes.push(*val);
+        }
+    }
+    
+    pub fn get_inbound_node(node_hash: u64) -> Option<Node> {
+        match GLOBAL_INBOUND_NODES_MAP.get().lock().unwrap().get(&node_hash) {
+            Some(node) => {
+                debug!("{}", node);
+                node
+            }
+            None => warn!("Node not found in outbound node list."),
+        }
+    }
+    
+    pub fn add_inbound_node(node_hash: u64, node: Node) {
+        let mut inbound_nodes = GLOBAL_INBOUND_NODES_MAP.get().lock().unwrap();
+        inbound_nodes.insert(node_hash, node);
+        debug!("inbound nodes list size: {}.", inbound_nodes.len());
+    }
+    
+    pub fn add_outbound_node(node_hash: u64, node: Node) {
+        let mut outbound_nodes = GLOBAL_OUTBOUND_NODES_MAP.get().lock().unwrap();
+        outbound_nodes.insert(node_hash, node);
+        debug!("outbound nodes list size: {}.", outbound_nodes.len());
+    }
+    
+    pub fn add_active_node(node_hash: u64, node: Node) {
+        let mut active_nodes = GLOBAL_ACTIVE_NODES_MAP.get().lock().unwrap();
+        active_nodes.insert(node_hash, node);
+        debug!("active nodes list size: {}.", active_nodes.len());
+    }
+    
+    pub fn add_temp_node(node_hash: u64, node: Node) {
+        let mut temp_nodes = GLOBAL_TEMP_NODES_MAP.get().lock().unwrap();
+        temp_nodes.insert(node_hash, node);
+        debug!("temp nodes list size: {}.", temp_nodes.len());
+    }
+    
+    pub fn move_inbound_to_active(node: Node) {
+        let mut inbound_nodes = GLOBAL_INBOUND_NODES_MAP.get().lock().unwrap();
+    
+        match inbound_nodes.remove(&node.node_hash) {
+            Some(_) => {
+                debug!("inbound node list size: {}.", inbound_nodes.len());
+                
+                let mut active_nodes = GLOBAL_ACTIVE_NODES_MAP.get().lock().unwrap();
+                active_nodes.insert(node.node_hash, node);
+                debug!("active nodes list size: {}.", active_nodes.len());
+                debug!("{}", node);
+            }
+            None => warn!("Node not found in inbound node list."),
+        }
+    }
+    
+    pub fn move_outbound_to_active(node_hash: u64) {
+        let mut outbound_nodes = GLOBAL_OUTBOUND_NODES_MAP.get().lock().unwrap();
+        
+        match outbound_nodes.remove(&node_hash) {
+            Some(node) => {
+                debug!("outbound node list size: {}.", outbound_nodes.len());
+                
+                let mut active_nodes = GLOBAL_ACTIVE_NODES_MAP.get().lock().unwrap();
+                active_nodes.insert(node.node_hash, node);
+                debug!("active nodes list size: {}.", active_nodes.len());
+                debug!("{}", node);
+            }
+            None => warn!("Node not found in outbound node list."),
+        }
+    }
+    
+    pub fn move_temp_to_outbound(node: Node) {
+        let mut temp_nodes = GLOBAL_TEMP_NODES_MAP.get().lock().unwrap();
+        
+        match temp_nodes.remove(&node.node_hash) {
+            Some(_) => {
+                debug!("temp node list size: {}.", temp_nodes.len());
+                
+                let mut outbound_nodes = GLOBAL_OUTBOUND_NODES_MAP.get().lock().unwrap();
+                outbound_nodes.insert(node.node_hash, node);
+                debug!("outbound nodes list size: {}.", outbound_nodes.len());
+                debug!("{}", node);
+            }
+            None => warn!("Node not found in temp node list."),
+        }
+    }
+}
 
 pub static HEADER_LENGTH: usize = 8;
 pub static NODE_ID_LENGTH: usize = 36;

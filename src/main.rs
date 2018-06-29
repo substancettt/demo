@@ -4,6 +4,9 @@ extern crate bincode;
 extern crate byteorder;
 extern crate bytes;
 extern crate dotenv;
+#[macro_use]
+extern crate log;
+extern crate log4rs;
 extern crate state;
 extern crate time;
 extern crate tokio;
@@ -11,40 +14,20 @@ extern crate tokio_codec;
 
 extern crate p2p_poc;
 
-#[macro_use]
-extern crate lazy_static;
-#[macro_use]
-extern crate log;
-extern crate log4rs;
-
 use bincode::config;
-
 use byteorder::{BigEndian, ReadBytesExt};
 use bytes::BufMut;
-
 use dotenv::*;
-
-use state::Storage;
-
-use std::collections::HashMap;
 use std::{env, io, mem};
-use std::sync::Mutex;
-use std::collections::hash_map::DefaultHasher;
+use std::collections::HashMap;
+use std::collections::hash_map::{DefaultHasher};
 use std::hash::{Hash, Hasher};
-
 use tokio::net::{TcpStream, TcpListener};
 use tokio::prelude::*;
 use tokio::runtime::Runtime;
 use tokio_codec::Decoder;
 
 use p2p_poc::p2p::*;
-
-lazy_static! {
-    static ref GLOBAL_INBOUND_NODES_MAP: Storage<Mutex<HashMap<u64, Node>>> = Storage::new();
-    static ref GLOBAL_ACTIVE_NODES_MAP: Storage<Mutex<HashMap<u64, Node>>> = Storage::new();
-    static ref GLOBAL_OUTBOUND_NODES_MAP: Storage<Mutex<HashMap<u64, Node>>> = Storage::new();
-    static ref GLOBAL_TEMP_NODES_MAP: Storage<Mutex<HashMap<u64, Node>>> = Storage::new();
-}
 
 fn main() {
     log4rs::init_file("config/log4rs.yaml", Default::default()).unwrap();
@@ -64,13 +47,14 @@ fn main() {
     let mut rt = Runtime::new().unwrap();
     
     let inbound_nodes = HashMap::new();
-    let active_nodes = HashMap::new();
     let outbound_nodes = HashMap::new();
     let temp_nodes = HashMap::new();
-    GLOBAL_INBOUND_NODES_MAP.set(Mutex::new(inbound_nodes));
-    GLOBAL_ACTIVE_NODES_MAP.set(Mutex::new(active_nodes));
-    GLOBAL_OUTBOUND_NODES_MAP.set(Mutex::new(outbound_nodes));
-    GLOBAL_TEMP_NODES_MAP.set(Mutex::new(temp_nodes));
+    let active_nodes = HashMap::new();
+    
+    P2p::init_inbound_node(inbound_nodes);
+    P2p::init_outbound_node(outbound_nodes);
+    P2p::init_active_node(active_nodes);
+    P2p::init_temp_node(temp_nodes);
     
     let local_addr = var("local_addr").unwrap().to_string();
     let listener = TcpListener::bind(&local_addr.parse().unwrap()).expect("failed to bind");
@@ -84,15 +68,11 @@ fn main() {
         });
     rt.spawn(server);
     
-    let mut temp_nodes = GLOBAL_TEMP_NODES_MAP.get().lock().unwrap();
+    let mut temp_nodes = Vec::new();
     let peer_nodes = var("peer_nodes").unwrap().to_string();
     let peer_nodes = peer_nodes.trim().split(",");
     for peer_node in peer_nodes {
         let (_, peer_node) = peer_node.split_at(6);
-//        let peer_node: Vec<&str> = peer_node.split("@").collect();
-//        let peer_node_id = peer_node[0];
-//        let peer_node_addr = peer_node[1];
-
     
         let (peer_node_id, peer_node_addr) = peer_node.split_at(NODE_ID_LENGTH);
         let (_, peer_node_addr) = peer_node_addr.split_at(1);
@@ -110,10 +90,10 @@ fn main() {
         node.id_sec1.copy_from_slice(id_sec1.as_bytes().to_vec().as_slice());
         node.id_sec2.copy_from_slice(id_sec2.as_bytes().to_vec().as_slice());
         
-        temp_nodes.insert(node.node_hash, node);
+        temp_nodes.push(node);
     }
     
-    for (_, temp_node) in temp_nodes.iter() {
+    for temp_node in temp_nodes.iter() {
         let peer_addr = temp_node.ip_addr.get_addr();
         let peer_node = temp_node.clone();
         let connect = TcpStream::connect(&peer_addr.parse().unwrap())
@@ -127,11 +107,7 @@ fn main() {
                 let peer_node_hash = peer_node.node_hash;
                 
                 // add connected peer into outbound nodes list
-                let mut outbound_nodes = GLOBAL_OUTBOUND_NODES_MAP.get().lock().unwrap();
-                outbound_nodes.insert(peer_node_hash, peer_node);
-                
-                debug!("Add into outbound node list {}", peer_node);
-                debug!("outbound nodes list size: {}.", outbound_nodes.len());
+                P2p::add_outbound_node(peer_node_hash, peer_node);
                 
                 let (mut tx, rx) =
                     P2p.framed(socket)
@@ -205,11 +181,9 @@ fn process(socket: TcpStream) {
     node.node_hash = node_hash;
     
     // add incoming peer into inbound nodes list
-    let mut inbound_nodes = GLOBAL_INBOUND_NODES_MAP.get().lock().unwrap();
-    inbound_nodes.insert(node_hash, node);
+    P2p::add_inbound_node(node_hash, node);
     
     debug!("{}", node);
-    debug!("inbound nodes list size: {}.", inbound_nodes.len());
     
     let (tx, rx) =
         P2p.framed(socket)
@@ -375,40 +349,20 @@ fn handle_handshake_req(body: Vec<u8>, node_hash: u64)
     res_body.put_slice(revision.to_vec().as_slice());
     
     // move inbound node to active
-    let mut inbound_nodes = GLOBAL_INBOUND_NODES_MAP.get().lock().unwrap();
+    let (id_sec1, id_sec2) = node_id.split_at(NODE_ID_SEC1_LENGTH);
+    let mut node = Node::new();
+    node.id_sec1.copy_from_slice(id_sec1.to_vec().as_slice());
+    node.id_sec2.copy_from_slice(id_sec2.to_vec().as_slice());
+    node.ip_addr.ip.copy_from_slice(ip.to_vec().as_slice());
+    node.ip_addr.port = req_body.ip_addr.port;
+    node.node_hash = node_hash;
+    P2p::move_inbound_to_active(node);
     
-    match inbound_nodes.remove(&node_hash) {
-        Some(mut node) => {
-            debug!("inbound node list size: {}.", inbound_nodes.len());
-            
-            let (id_sec1, id_sec2) = node_id.split_at(NODE_ID_SEC1_LENGTH);
-            node.id_sec1.copy_from_slice(id_sec1.to_vec().as_slice());
-            node.id_sec2.copy_from_slice(id_sec2.to_vec().as_slice());
-            node.ip_addr.port = req_body.ip_addr.port;
-            
-            let mut active_nodes = GLOBAL_ACTIVE_NODES_MAP.get().lock().unwrap();
-            active_nodes.insert(node.node_hash, node);
-            debug!("active nodes list size: {}.", active_nodes.len());
-            debug!("{}", node);
-        }
-        None => warn!("Node not found in inbound node list."),
-    }
     res_body
 }
 
 fn handle_handshake_res(node_hash: u64) {
-    let mut outbound = GLOBAL_OUTBOUND_NODES_MAP.get().lock().unwrap();
-    
-    // let node =
-    match outbound.remove(&node_hash) {
-        Some(node) => {
-            debug!("node: {}", node);
-            let mut active_nodes = GLOBAL_ACTIVE_NODES_MAP.get().lock().unwrap();
-            active_nodes.insert(node_hash, node);
-            debug!("active nodes list size: {}.", active_nodes.len());
-        }
-        None => warn!("Node not found in outbound node list."),
-    }
+    P2p::move_outbound_to_active(node_hash);
 }
 
 fn handle_active_nodes_req(node_hash: u64)
@@ -418,8 +372,7 @@ fn handle_active_nodes_req(node_hash: u64)
     
     let mut encoder = config();
     let encoder = encoder.big_endian();
-    let active_nodes = GLOBAL_ACTIVE_NODES_MAP.get().lock().unwrap();
-    match active_nodes.get(&node_hash) {
+    match P2p::get_inbound_node(&node_hash) {
         Some(node) => {
             debug!("{}", node);
             
@@ -475,13 +428,10 @@ fn handle_active_nodes_res(req_body: Vec<u8>) {
         rest = next;
         i = i + 1;
     }
-    
-    let temp_nodes = GLOBAL_TEMP_NODES_MAP.get().lock().unwrap();
-//    for node in node_list.iter() {
-//        temp_nodes.insert(node.id_hash, *node);
-//        debug!("Temp {}", node);
-//    }
-    debug!("temp nodes list size: {}.", temp_nodes.len());
+
+    for node in node_list.iter() {
+        P2p::add_temp_node(node.id_hash, *node);
+    }
 }
 
 fn calculate_hash<T: Hash>(t: &T) -> u64 {
