@@ -7,6 +7,7 @@ pub struct P2p;
 
 pub static HEADER_LENGTH: usize = 8;
 pub static NODE_ID_LENGTH: usize = 36;
+pub static NODE_ID_SEC1_LENGTH: usize = 24;
 pub static IP_LENGTH: usize = 8;
 
 #[derive(Serialize, Deserialize, PartialEq)]
@@ -138,6 +139,67 @@ impl fmt::Display for Action {
 }
 
 #[derive(Serialize, Deserialize, PartialEq)]
+pub enum SyncAction {
+    STATUSREQ = 0,
+    STATUSRES = 1,
+    BLOCKSHEADERSREQ = 2,
+    BLOCKSHEADERSRES = 3,
+    BLOCKSBODIESREQ = 4,
+    BLOCKSBODIESRES = 5,
+    BROADCASTTX = 6,
+    BROADCASTBLOCK = 7,
+    UNKNOWN = 0xFF,
+}
+
+
+impl SyncAction {
+    pub fn value(&self) -> u8 {
+        match *self {
+            SyncAction::STATUSREQ => 0 as u8,
+            SyncAction::STATUSRES => 1 as u8,
+            SyncAction::BLOCKSHEADERSREQ => 2 as u8,
+            SyncAction::BLOCKSHEADERSRES => 3 as u8,
+            SyncAction::BLOCKSBODIESREQ => 4 as u8,
+            SyncAction::BLOCKSBODIESRES => 5 as u8,
+            SyncAction::BROADCASTTX => 6 as u8,
+            SyncAction::BROADCASTBLOCK => 7 as u8,
+            SyncAction::UNKNOWN => 0xFF as u8,
+        }
+    }
+    
+    pub fn get(value: u8) -> SyncAction {
+        match value {
+            0 => SyncAction::STATUSREQ,
+            1 => SyncAction::STATUSRES,
+            2 => SyncAction::BLOCKSHEADERSREQ,
+            3 => SyncAction::BLOCKSHEADERSRES,
+            4 => SyncAction::BLOCKSBODIESREQ,
+            5 => SyncAction::BLOCKSBODIESRES,
+            6 => SyncAction::BROADCASTTX,
+            7 => SyncAction::BROADCASTBLOCK,
+            _ => SyncAction::UNKNOWN,
+        }
+    }
+}
+
+impl fmt::Display for SyncAction {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let printable = match *self {
+            SyncAction::STATUSREQ => "STATUSREQ",
+            SyncAction::STATUSRES => "STATUSRES",
+            SyncAction::BLOCKSHEADERSREQ => "BLOCKSHEADERSREQ",
+            SyncAction::BLOCKSHEADERSRES => "BLOCKSHEADERSRES",
+            SyncAction::BLOCKSBODIESREQ => "BLOCKSBODIESREQ",
+            SyncAction::BLOCKSBODIESRES => "BLOCKSBODIESRES",
+            SyncAction::BROADCASTTX => "BROADCASTTX",
+            SyncAction::BROADCASTBLOCK => "BROADCASTBLOCK",
+            SyncAction::UNKNOWN => "UNKNOWN",
+        };
+        write!(f, "{}", printable)
+    }
+}
+
+#[derive(Serialize, Deserialize, PartialEq)]
 pub struct Head {
     pub ver: u16,
     pub ctrl: u8,
@@ -215,7 +277,7 @@ impl IpAddr {
     }
     
     pub fn get_addr(&self) -> String {
-        format!("{}.{}.{}.{}:{}", self.ip[0], self.ip[1], self.ip[2], self.ip[3], self.port).to_string()
+        format!("{}.{}.{}.{}:{}", self.ip[1], self.ip[3], self.ip[5], self.ip[7], self.port).to_string()
     }
 }
 
@@ -284,12 +346,12 @@ impl fmt::Display for ActiveNodesSection {
     }
 }
 
-#[derive(Clone, Copy, Hash, PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 pub struct Node {
     pub id_sec1: [u8; 24],
     pub id_sec2: [u8; 12],
     pub ip_addr: IpAddr,
-    pub id_hash: u64,
+    pub node_hash: u64,
 }
 
 impl Node {
@@ -298,7 +360,7 @@ impl Node {
             id_sec1: [b'0'; 24],
             id_sec2: [b'0'; 12],
             ip_addr: IpAddr::new(),
-            id_hash: 0,
+            node_hash: 0,
         }
     }
 }
@@ -314,7 +376,7 @@ impl fmt::Display for Node {
         }
         try!(write!(f, "\n"));
         try!(write!(f, "    {}\n", self.ip_addr));
-        write!(f, "    id_hash: {:064X}", self.id_hash)
+        write!(f, "    node hash: {:064X}", self.node_hash)
     }
 }
 
@@ -328,12 +390,12 @@ impl Encoder for P2p {
         let encoded: Vec<u8> = encoder.serialize(&item.head).unwrap();
         dst.put_slice(encoded.as_slice());
         dst.put_slice(item.body.as_slice());
-    
-        let mut i = 0;
-        for c in item.body.iter() {
-            debug!("encoded body[{}]: {:02X}", i, c);
-            i = i + 1;
-        }
+
+//        let mut i = 0;
+//        for c in item.body.iter() {
+//            debug!("encoded body[{}]: {:02X}", i, c);
+//            i = i + 1;
+//        }
         
         return Ok(());
     }
@@ -345,26 +407,26 @@ impl Decoder for P2p {
     
     fn decode(&mut self, src: &mut BytesMut) -> io::Result<Option<ChannelBuffer>> {
         let len = src.len();
-        if src.len() > 0 {
-
-//            let mut i = 0;
-//            for c in src.iter() {
-//                debug!("src[{}]: {:02X}", i, c);
-//                i = i + 1;
-//            }
-
-
-            debug!("Frame length: {}", len);
+        if len > 0 && len != 1440 {
+            
+            let buf = src.split_to(len);
+            debug!("Frame length: {}", buf.len());
+            
             let mut decoder = config();
             let decoder = decoder.big_endian();
-
+            
             let mut decoded = ChannelBuffer::new();
-            let (head, rest) = src.split_at(HEADER_LENGTH);
-            let (body, _) = src.split_at(len - HEADER_LENGTH);
+            let (head, body) = buf.split_at(HEADER_LENGTH);
             decoded.head = decoder.deserialize(head).unwrap();
             decoded.body.put_slice(body.to_vec().as_slice());
 
-            debug!("ChannelBuffer: {}", decoded);
+            if decoded.head.len != decoded.body.len() as u32 {
+                debug!("Body length in header: {}", decoded.head.len);
+                debug!("Body length: {}", decoded.body.len());
+                debug!("ChannelBuffer: {}", decoded);
+            }
+            
+            debug!("Head: {}", decoded.head);
             
             Ok(Some(decoded))
         } else {
