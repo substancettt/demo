@@ -372,12 +372,14 @@ fn handle_active_nodes_req(node_hash: u64)
     
     let mut encoder = config();
     let encoder = encoder.big_endian();
-    match P2p::get_inbound_node(&node_hash) {
+    match P2p::get_inbound_node(node_hash) {
         Some(node) => {
             debug!("{}", node);
-            
-            res_body.push(active_nodes.len() as u8);
-            for (_, node) in active_nodes.iter() {
+
+            let active_nodes = P2p::get_active_nodes();
+            let node_count = active_nodes.len() as u8;
+            res_body.push(node_count);
+            for node in active_nodes.iter() {
                 res_body.put_slice(node.id_sec1.to_vec().as_slice());
                 res_body.put_slice(node.id_sec2.to_vec().as_slice());
                 
@@ -430,7 +432,7 @@ fn handle_active_nodes_res(req_body: Vec<u8>) {
     }
 
     for node in node_list.iter() {
-        P2p::add_temp_node(node.id_hash, *node);
+        P2p::add_temp_node(node.node_hash, *node);
     }
 }
 

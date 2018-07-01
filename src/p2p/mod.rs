@@ -44,10 +44,12 @@ impl P2p {
         }
     }
     
-    pub fn get_active_nodes(mut active_nodes: Vec<Node>) {
+    pub fn get_active_nodes() -> Vec<Node> {
+        let mut active_nodes = Vec::new();
         for val in GLOBAL_ACTIVE_NODES_MAP.get().lock().unwrap().values() {
             active_nodes.push(*val);
         }
+        active_nodes
     }
     
     pub fn get_temp_nodes(mut temp_nodes: Vec<Node>) {
@@ -60,9 +62,51 @@ impl P2p {
         match GLOBAL_INBOUND_NODES_MAP.get().lock().unwrap().get(&node_hash) {
             Some(node) => {
                 debug!("{}", node);
-                node
+                Some(*node)
             }
-            None => warn!("Node not found in outbound node list."),
+            None => {
+                warn!("Node not found in inbound node list.");
+                None
+            }
+        }
+    }
+
+    pub fn get_outbound_node(node_hash: u64) -> Option<Node> {
+        match GLOBAL_OUTBOUND_NODES_MAP.get().lock().unwrap().get(&node_hash) {
+            Some(node) => {
+                debug!("{}", node);
+                Some(*node)
+            }
+            None => {
+                warn!("Node not found in outbound node list.");
+                None
+            }
+        }
+    }
+
+    pub fn get_active_node(node_hash: u64) -> Option<Node> {
+        match GLOBAL_ACTIVE_NODES_MAP.get().lock().unwrap().get(&node_hash) {
+            Some(node) => {
+                debug!("{}", node);
+                Some(*node)
+            }
+            None => {
+                warn!("Node not found in active node list.");
+                None
+            }
+        }
+    }
+
+    pub fn get_temp_node(node_hash: u64) -> Option<Node> {
+        match GLOBAL_TEMP_NODES_MAP.get().lock().unwrap().get(&node_hash) {
+            Some(node) => {
+                debug!("{}", node);
+                Some(*node)
+            }
+            None => {
+                warn!("Node not found in temp node list.");
+                None
+            }
         }
     }
     
