@@ -1,6 +1,0 @@
-# Configurations
-
-node_id=c33d4c07-6a29-4ca6-8b06-b2781ba7f9b1
-net_id=666
-local_addr=127.0.0.1:30301
-peer_nodes=p2p://7165583a-759c-406d-aa0a-dacd4238ea49@0.0.0.0:30303,p2p://c33d4c07-6a29-4ca6-8b06-b2781ba7f9b2@0.0.0.0:30302
